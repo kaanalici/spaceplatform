@@ -26,40 +26,73 @@
         <span class="pw pw-shield hidden" id="pw-shield">🛡</span>
         <span class="pw pw-magnet hidden" id="pw-magnet">🧲<b id="pw-magnet-t">8</b></span>
         <span class="pw pw-jet hidden" id="pw-jet">🚀<b id="pw-jet-t">2</b></span>
+        <span class="pw pw-double hidden" id="pw-double">✨<b id="pw-double-t">10</b></span>
+        <span class="pw pw-freeze hidden" id="pw-freeze">❄<b id="pw-freeze-t">5</b></span>
+        <span class="pw pw-feather hidden" id="pw-feather">🪶</span>
       </div>
     </div>
     <div class="hud-right">
       <div class="best">REKOR <b id="hud-best">0</b></div>
+      <div class="run-coins">⬢ <b id="hud-coins">0</b></div>
       <div class="hud-btns">
         <button id="btn-sound" title="Ses">🔊</button>
         <button id="btn-pause" title="Duraklat">⏸</button>
       </div>
     </div>
+
+    <div class="hp-wrap" id="hp-wrap">
+      <span class="hp-label">CAN</span>
+      <div class="hp-pips" id="hud-hp"><i></i><i></i><i></i></div>
+    </div>
+
+    <div class="boss-bar hidden" id="boss-bar">
+      <div class="boss-name"><span>☠</span> <b id="boss-name">GÖKYÜZÜ BEKÇİSİ</b></div>
+      <div class="boss-pips" id="boss-pips"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    </div>
+  </div>
+
+  <!-- ============ BOSS UYARISI ============ -->
+  <div class="boss-warn" id="boss-warn" aria-live="polite">
+    <div class="bw-kicker" id="bw-kicker">⚠ BOSS GELİYOR ⚠</div>
+    <div class="bw-title" id="bw-title">GÖKYÜZÜ BEKÇİSİ</div>
+    <div class="bw-sub" id="bw-sub">6 ÇEKİRDEK TOPLA · CANINI KORU</div>
   </div>
 
   <!-- ============ MENÜ ============ -->
-  <div class="overlay" id="menu">
+  <div class="overlay menu-ov" id="menu">
     <div class="ov-inner">
       <div class="logo">WHIRLY<span>BIRD</span></div>
       <p class="tag">Neon gökyüzünde yüksel. Düşen kaybeder.</p>
+
+      <div class="wallet-bar">
+        <span class="wallet"><i>⬢</i><b id="menu-coins">0</b><em>NEON</em></span>
+        <span class="wallet sub">REKOR <b id="menu-best">0</b></span>
+      </div>
+
+      <button class="btn big" id="btn-start">OYNA</button>
+
+      <div class="menu-grid">
+        <button class="menu-card" id="btn-crate" type="button">
+          <span class="mc-ico">🎁</span>
+          <span class="mc-t">SANDIK</span>
+          <span class="mc-s">100 ⬢</span>
+        </button>
+        <button class="menu-card" id="btn-cosmetics" type="button">
+          <span class="mc-ico">🛸</span>
+          <span class="mc-t">KOZMETİK</span>
+          <span class="mc-s" id="menu-owned">1 / 16</span>
+        </button>
+      </div>
+
+      <button class="btn ghost slim" id="btn-settings" type="button">⚙ AYARLAR</button>
 
       <div class="mode-pick" id="mode-pick" role="group" aria-label="Kontrol stili">
         <button class="mode-btn" data-mode="pc" type="button">🖥<span>BİLGİSAYAR</span></button>
         <button class="mode-btn" data-mode="touch" type="button">📱<span>TELEFON</span></button>
       </div>
 
-      <button class="btn big" id="btn-start">OYNA</button>
-
-      <p class="ctrl" id="ctrl-pc">
-        <span class="key">←</span><span class="key">→</span> veya <span class="key">A</span><span class="key">D</span> ile hareket<br>
-        Zıplama otomatik · Fare ile sürükleyebilirsin
-      </p>
-      <p class="ctrl hidden" id="ctrl-touch">
-        Ekranın <b>sol</b> yarısına bas → sola<br>
-        <b>sağ</b> yarısına bas → sağa · Zıplama otomatik
-      </p>
-
-      <div class="best-line">REKOR <b id="menu-best">0</b></div>
+      <p class="ctrl" id="ctrl-pc">← → / A D · Zıplama otomatik · Fare ile sürükle</p>
+      <p class="ctrl hidden" id="ctrl-touch">Sol yarıya bas → sola · Sağ yarıya bas → sağa</p>
     </div>
   </div>
 
@@ -69,9 +102,11 @@
       <div class="over-title" id="over-title">DÜŞTÜN!</div>
       <div class="score-big" id="over-score">0</div>
       <div class="score-sub"><span id="over-meters">0 m</span><span class="dot">·</span><span id="over-stars">★ 0</span></div>
+      <div class="reward-line"><i>⬢</i> +<b id="over-coins">0</b> NEON<span id="over-wallet">· cüzdan 0</span></div>
       <div class="new-rec hidden" id="new-rec">YENİ REKOR!</div>
       <div class="best-line">REKOR <b id="over-best">0</b></div>
       <button class="btn big" id="btn-again">TEKRAR OYNA</button>
+      <button class="btn ghost" id="btn-over-crate">🎁 SANDIK AÇ</button>
       <button class="btn ghost" id="btn-menu">MENÜ</button>
     </div>
   </div>
@@ -84,6 +119,108 @@
       <button class="btn ghost" id="btn-pause-menu">MENÜ</button>
     </div>
   </div>
+
+  <!-- ============ SANDIK ============ -->
+  <section class="sheet hidden" id="sheet-crate">
+    <header class="sheet-head">
+      <button class="back" data-close type="button" aria-label="Geri">‹</button>
+      <div class="sheet-title">SANDIK</div>
+      <span class="wallet small"><i>⬢</i><b id="crate-coins">0</b></span>
+    </header>
+    <div class="sheet-body">
+      <div class="crate-stage" id="crate-stage">
+        <div class="crate-glow" id="crate-glow"></div>
+        <div class="crate" id="crate">
+          <div class="crate-lid"></div>
+          <div class="crate-box">
+            <span class="crate-strap"></span>
+            <span class="crate-q">?</span>
+          </div>
+        </div>
+        <div class="crate-spark" id="crate-spark"></div>
+      </div>
+
+      <div class="crate-result hidden" id="crate-result">
+        <div class="rr-rar" id="rr-rar">NADİR</div>
+        <div class="rr-prev-wrap"><canvas id="rr-prev" width="132" height="132"></canvas></div>
+        <div class="rr-name" id="rr-name">BUZ</div>
+        <div class="rr-note" id="rr-note">Yeni kozmetik açıldı!</div>
+        <button class="btn ghost slim rr-equip hidden" id="btn-equip-reward" type="button">HEMEN KUŞAN</button>
+      </div>
+
+      <div class="crate-intro" id="crate-intro">
+        <p>Sandıkta <b>16</b> kozmetik var. Her açılışta henüz sahip olmadığın bir parça çıkar.</p>
+        <p class="odds">YAYGIN %55 · NADİR %30 · EPİK %12 · EFSANE %3</p>
+      </div>
+
+      <button class="btn big crate-btn" id="btn-open-crate" type="button">SANDIĞI AÇ · 100 ⬢</button>
+      <button class="btn ghost hidden" id="btn-crate-done" type="button">TAMAM</button>
+    </div>
+  </section>
+
+  <!-- ============ KOZMETİK ============ -->
+  <section class="sheet hidden" id="sheet-cos">
+    <header class="sheet-head">
+      <button class="back" data-close type="button" aria-label="Geri">‹</button>
+      <div class="sheet-title">KOZMETİK</div>
+      <span class="wallet small"><i>⬢</i><b id="cos-coins">0</b></span>
+    </header>
+    <div class="cos-tabs" id="cos-tabs">
+      <button class="on" data-tab="skin" type="button">KARAKTERLER</button>
+      <button data-tab="trail" type="button">İZLER</button>
+    </div>
+    <div class="sheet-body cos-body">
+      <div class="cos-grid" id="cos-grid"></div>
+      <p class="set-note">Kozmetikler sadece görünümü değiştirir; hız, puan veya zorluk etkilenmez.</p>
+    </div>
+  </section>
+
+  <!-- ============ AYARLAR ============ -->
+  <section class="sheet hidden" id="sheet-set">
+    <header class="sheet-head">
+      <button class="back" data-close type="button" aria-label="Geri">‹</button>
+      <div class="sheet-title">AYARLAR</div>
+      <span class="sheet-status" id="set-quality-tag">OTO</span>
+    </header>
+    <div class="sheet-body">
+      <div class="set-group">
+        <div class="set-label">KONTROL</div>
+        <div class="mode-pick set-modes" role="group" aria-label="Kontrol stili">
+          <button class="mode-btn" data-mode="pc" type="button">🖥<span>BİLGİSAYAR</span></button>
+          <button class="mode-btn" data-mode="touch" type="button">📱<span>TELEFON</span></button>
+        </div>
+        <p class="set-note">Bilgisayar: ← → / A D · Telefon: ekranın sol/sağ yarısı.</p>
+      </div>
+
+      <button class="set-row" id="set-sound" type="button" aria-pressed="true">
+        <span>SES</span><span class="switch on" id="sw-sound"></span>
+      </button>
+      <button class="set-row" id="set-shake" type="button" aria-pressed="true">
+        <span>EKRAN SARSINTISI</span><span class="switch on" id="sw-shake"></span>
+      </button>
+
+      <div class="set-group">
+        <div class="set-label">GRAFİK KALİTESİ</div>
+        <div class="seg" id="seg-quality">
+          <button data-q="auto" type="button">OTO</button>
+          <button data-q="0" type="button">YÜKSEK</button>
+          <button data-q="1" type="button">ORTA</button>
+          <button data-q="2" type="button">DÜŞÜK</button>
+        </div>
+        <p class="set-note">OTO, cihazın hızına göre kendiliğinden ayarlar. Düşük kalite en akıcısıdır.</p>
+      </div>
+
+      <div class="set-group danger">
+        <div class="set-label">İLERLEME</div>
+        <button class="btn danger-btn" id="btn-reset" type="button">İLERLEMEYİ SIFIRLA</button>
+        <p class="set-note">NEON, kozmetikler ve rekor silinir. Ayarlar korunur.</p>
+      </div>
+
+      <p class="set-note center">Whirlybird · kaan alıcı tarafından yapıldı</p>
+    </div>
+  </section>
+
+  <div class="toast" id="toast"></div>
 
   <div class="vignette"></div>
   <div class="hint-touch" id="hint-touch">Sol yarı ← &nbsp;·&nbsp; → sağ yarı</div>
