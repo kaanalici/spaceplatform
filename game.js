@@ -97,11 +97,16 @@
 
   /* ---------------- renk / tema ---------------- */
 
+  var hexCache = {};
   function hexRgb(h) {
-    h = h.replace('#', '');
-    if (h.length === 3) h = h[0] + h[0] + h[1] + h[1] + h[2] + h[2];
-    var n = parseInt(h, 16);
-    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    var cached = hexCache[h];
+    if (cached) return cached;
+    var s = h.replace('#', '');
+    if (s.length === 3) s = s[0] + s[0] + s[1] + s[1] + s[2] + s[2];
+    var n = parseInt(s, 16);
+    cached = [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    hexCache[h] = cached;
+    return cached;
   }
   function mix(c1, c2, t) {
     var a = hexRgb(c1), b = hexRgb(c2);
@@ -210,7 +215,10 @@
   }
 
   var actx = null;
-  var soundOn = store('wb_sound') !== '0';
+  /* Test / otomasyon için sessiz açılış: ?sessiz=1 veya ?mute=1
+     Ses tercihini kaydetmez, sadece o sekmede sesi kapatır. */
+  var FORCE_MUTE = /(?:^|[?&])(?:sessiz|mute)=1(?:&|$)/.test(location.search || '');
+  var soundOn = !FORCE_MUTE && store('wb_sound') !== '0';
 
   function audio() {
     if (!soundOn) return null;
@@ -300,7 +308,9 @@
   var BOSS_HP = 6;             /* 6 boss çekirdeği = 6 vuruş */
   var BOSS_CORE_TIME = 3.4;    /* yeni çekirdek düşme aralığı */
   var BOSS_INTRO = 1.9;        /* giriş animasyonu */
-  var BOSS_SHOT_MAX = 20;
+  /* telefonda aynı anda ekranda daha az mermi tutulur: fill-rate ve
+     çarpışma maliyeti düşer, oynanış hissi aynı kalır */
+  var BOSS_SHOT_MAX = isTouch ? 14 : 20;
   var PLAYER_HP = 3;           /* boss mermilerine karşı oyuncu canı */
 
   /* 20 farklı boss türü — her koşuda biri rastgele seçilir.
@@ -1431,6 +1441,7 @@
       if (b.charge > 0) {
         b.charge -= dt;
         if (Math.random() < 0.45) {
+          capParticles(1);
           G.particles.push({
             x: b.x + rand(-16, 16), y: G.camY + b.sy + rand(-10, 16),
             vx: rand(-30, 30), vy: rand(-10, 40),
@@ -1503,6 +1514,7 @@
     var c = G.bossCore;
     if (!c) return;
     var p = G.bird;
+    var ty = (G.boss && G.boss.type) || BOSS_TYPES[0];
     c.t += dt;
     c.phase += dt * 2.4;
     c.y += c.vy * dt;
@@ -1522,6 +1534,7 @@
     c.spark -= dt;
     if (c.spark <= 0) {
       c.spark = 0.07;
+      capParticles(1);
       G.particles.push({
         x: c.x + rand(-12, 12), y: c.y + rand(-12, 12),
         vx: rand(-16, 16), vy: rand(20, 60),
@@ -1633,6 +1646,7 @@
         continue;
       }
       if (Math.random() < 0.22) {
+        capParticles(1);
         G.particles.push({
           x: s.x, y: s.y, vx: rand(-10, 10), vy: rand(-10, 10),
           life: 0.2, max: 0.2, size: rand(1.4, 2.8),
@@ -1710,7 +1724,15 @@
   /* ---------------- HUD ---------------- */
 
   var lastHudKey = '';
+  var lastHudAt = 0;
   function updateHud(force) {
+    if (!force) {
+      var now = (window.performance && performance.now) ? performance.now() : Date.now();
+      if (now - lastHudAt < 90) return;   /* DOM yazımını ~11 Hz'e sınırla */
+      lastHudAt = now;
+    } else {
+      lastHudAt = (window.performance && performance.now) ? performance.now() : Date.now();
+    }
     var key = G.meters + '|' + G.starsGot + '|' + G.best + '|' + G.coinsEarned;
     if (!force && key === lastHudKey) return;
     lastHudKey = key;
@@ -2784,6 +2806,31 @@
 
   /* ---------------- boss çizimi ---------------- */
 
+  /* Gradient nesneleri konumdan bağımsızdır; tür başına bir kez üretilip
+     her karede yeniden kullanılır. Mobilde gradient üretimi ciddi maliyettir. */
+  var bossGradCache = {};
+  function bossGrad(key, make) {
+    var g = bossGradCache[key];
+    if (!g) {
+      g = make();
+      bossGradCache[key] = g;
+    }
+    return g;
+  }
+
+  /* mermi halesi: renk başına bir kez üretilir (her karede gradient yok) */
+  var shotHaloCache = {};
+  function shotHalo(col) {
+    var g = shotHaloCache[col];
+    if (!g) {
+      g = ctx.createRadialGradient(0, 0, 1, 0, 0, 22);
+      g.addColorStop(0, rgba(col, 0.5));
+      g.addColorStop(1, rgba(col, 0));
+      shotHaloCache[col] = g;
+    }
+    return g;
+  }
+
   function drawBossShots() {
     for (var i = 0; i < G.bossShots.length; i++) {
       var s = G.bossShots[i];
@@ -2792,12 +2839,14 @@
       ctx.translate(s.x, s.y);
       ctx.rotate(s.angle);
 
-      var halo = ctx.createRadialGradient(0, 0, 1, 0, 0, 22);
-      halo.addColorStop(0, rgba(col, 0.5));
-      halo.addColorStop(1, rgba(col, 0));
-      ctx.fillStyle = halo;
+      if (GLOW > 0) {
+        ctx.fillStyle = shotHalo(col);
+      } else {
+        /* mobil: gradient yerine tek düz daire */
+        ctx.fillStyle = rgba(col, 0.16);
+      }
       ctx.beginPath();
-      ctx.arc(0, 0, 22, 0, Math.PI * 2);
+      ctx.arc(0, 0, GLOW > 0 ? 22 : 16, 0, Math.PI * 2);
       ctx.fill();
 
       glowOn(s.glow || col, 12);
@@ -2939,10 +2988,13 @@
     ctx.translate(b.x, sy);
 
     /* hale */
-    var halo = ctx.createRadialGradient(0, 0, 18, 0, 0, 118);
-    halo.addColorStop(0, rgba(c1, 0.3));
-    halo.addColorStop(0.55, rgba(c1, 0.1));
-    halo.addColorStop(1, rgba(c1, 0));
+    var halo = bossGrad('halo|' + c1, function () {
+      var g = ctx.createRadialGradient(0, 0, 18, 0, 0, 118);
+      g.addColorStop(0, rgba(c1, 0.3));
+      g.addColorStop(0.55, rgba(c1, 0.1));
+      g.addColorStop(1, rgba(c1, 0));
+      return g;
+    });
     ctx.fillStyle = halo;
     ctx.beginPath();
     ctx.arc(0, 0, 118, 0, Math.PI * 2);
@@ -3080,10 +3132,13 @@
 
     /* gövde */
     if (form === 'crystal') {
-      var cg = ctx.createLinearGradient(0, -46, 0, 46);
-      cg.addColorStop(0, mix('#ffffff', c1, 0.35));
-      cg.addColorStop(0.42, mix('#08020a', c1, 0.5));
-      cg.addColorStop(1, '#050208');
+      var cg = bossGrad('cg|' + c1, function () {
+        var g = ctx.createLinearGradient(0, -46, 0, 46);
+        g.addColorStop(0, mix('#ffffff', c1, 0.35));
+        g.addColorStop(0.42, mix('#08020a', c1, 0.5));
+        g.addColorStop(1, '#050208');
+        return g;
+      });
       ctx.save();
       glowOn(c1, 18);
       ctx.fillStyle = cg;
@@ -3112,10 +3167,13 @@
       ctx.stroke();
       ctx.restore();
     } else if (form === 'void') {
-      var vg = ctx.createRadialGradient(0, 0, 2, 0, 0, 44);
-      vg.addColorStop(0, '#000000');
-      vg.addColorStop(0.62, mix('#020108', c1, 0.1));
-      vg.addColorStop(1, rgba(c1, 0.35));
+      var vg = bossGrad('vg|' + c1, function () {
+        var g = ctx.createRadialGradient(0, 0, 2, 0, 0, 44);
+        g.addColorStop(0, '#000000');
+        g.addColorStop(0.62, mix('#020108', c1, 0.1));
+        g.addColorStop(1, rgba(c1, 0.35));
+        return g;
+      });
       ctx.fillStyle = vg;
       ctx.beginPath();
       ctx.ellipse(0, 0, 41, 39, 0, 0, Math.PI * 2);
@@ -3126,10 +3184,13 @@
     } else {
       var bw2 = form === 'ring' ? 35 : 40;
       var bh2 = form === 'ring' ? 32 : 36;
-      var bg = ctx.createRadialGradient(-9, -13, 4, 0, 0, 44);
-      bg.addColorStop(0, mix('#08020a', c1, 0.34));
-      bg.addColorStop(0.55, mix('#0a0309', c1, 0.14));
-      bg.addColorStop(1, '#050208');
+      var bg = bossGrad('bg|' + c1, function () {
+        var g = ctx.createRadialGradient(-9, -13, 4, 0, 0, 44);
+        g.addColorStop(0, mix('#08020a', c1, 0.34));
+        g.addColorStop(0.55, mix('#0a0309', c1, 0.14));
+        g.addColorStop(1, '#050208');
+        return g;
+      });
       ctx.fillStyle = bg;
       ctx.beginPath();
       ctx.ellipse(0, 0, bw2, bh2, 0, 0, Math.PI * 2);
@@ -3153,10 +3214,21 @@
     /* yüz / çekirdek */
     if (form === 'crystal') {
       var gemR = 12 + chargeK * 5;
-      var gg = ctx.createRadialGradient(0, 0, 1, 0, 0, gemR + 16);
-      gg.addColorStop(0, '#ffffff');
-      gg.addColorStop(0.35, chargeK > 0 ? '#ffffff' : c1);
-      gg.addColorStop(1, rgba(c1, 0));
+      var gg;
+      if (chargeK > 0) {
+        gg = ctx.createRadialGradient(0, 0, 1, 0, 0, gemR + 16);
+        gg.addColorStop(0, '#ffffff');
+        gg.addColorStop(0.35, '#ffffff');
+        gg.addColorStop(1, rgba(c1, 0));
+      } else {
+        gg = bossGrad('gg|' + c1, function () {
+          var g = ctx.createRadialGradient(0, 0, 1, 0, 0, 28);
+          g.addColorStop(0, '#ffffff');
+          g.addColorStop(0.35, c1);
+          g.addColorStop(1, rgba(c1, 0));
+          return g;
+        });
+      }
       ctx.fillStyle = gg;
       ctx.beginPath();
       ctx.arc(0, 0, gemR + 14, 0, Math.PI * 2);
@@ -3185,10 +3257,21 @@
       ctx.stroke();
     } else if (form === 'void') {
       var vr = 7 + chargeK * 3;
-      var vgg = ctx.createRadialGradient(0, 0, 1, 0, 0, vr + 22);
-      vgg.addColorStop(0, chargeK > 0 ? '#ffffff' : rgba(c1, 0.95));
-      vgg.addColorStop(0.45, rgba(c1, 0.35));
-      vgg.addColorStop(1, rgba(c1, 0));
+      var vgg;
+      if (chargeK > 0) {
+        vgg = ctx.createRadialGradient(0, 0, 1, 0, 0, vr + 22);
+        vgg.addColorStop(0, '#ffffff');
+        vgg.addColorStop(0.45, rgba(c1, 0.35));
+        vgg.addColorStop(1, rgba(c1, 0));
+      } else {
+        vgg = bossGrad('vgg|' + c1, function () {
+          var g = ctx.createRadialGradient(0, 0, 1, 0, 0, 29);
+          g.addColorStop(0, rgba(c1, 0.95));
+          g.addColorStop(0.45, rgba(c1, 0.35));
+          g.addColorStop(1, rgba(c1, 0));
+          return g;
+        });
+      }
       ctx.fillStyle = vgg;
       ctx.beginPath();
       ctx.arc(0, 0, vr + 20, 0, Math.PI * 2);
@@ -3220,10 +3303,22 @@
       ctx.restore();
     } else {
       var eyeR = (form === 'ring' ? 10 : 12) + chargeK * 4;
-      var eg = ctx.createRadialGradient(0, 0, 1, 0, 0, eyeR + 14);
-      eg.addColorStop(0, '#ffffff');
-      eg.addColorStop(0.32, chargeK > 0 ? '#ffffff' : c1);
-      eg.addColorStop(1, rgba(c1, 0));
+      var eg;
+      if (chargeK > 0) {
+        eg = ctx.createRadialGradient(0, 0, 1, 0, 0, eyeR + 14);
+        eg.addColorStop(0, '#ffffff');
+        eg.addColorStop(0.32, '#ffffff');
+        eg.addColorStop(1, rgba(c1, 0));
+      } else {
+        var eyeRad = form === 'ring' ? 24 : 26;
+        eg = bossGrad('eg|' + c1 + '|' + form, function () {
+          var g = ctx.createRadialGradient(0, 0, 1, 0, 0, eyeRad);
+          g.addColorStop(0, '#ffffff');
+          g.addColorStop(0.32, c1);
+          g.addColorStop(1, rgba(c1, 0));
+          return g;
+        });
+      }
       ctx.fillStyle = eg;
       ctx.beginPath();
       ctx.arc(0, 0, eyeR + 12, 0, Math.PI * 2);
@@ -3551,6 +3646,7 @@
   var acc = 0;
   var last = 0;
   var perfAcc = 0, perfN = 0, perfCool = 1.2;
+  var perfAvgMs = 16.7;
 
   /* kare süresini ölç, sürekli yavaşsa kaliteyi düşür */
   function perfSample(ms) {
@@ -3563,6 +3659,7 @@
     var avg = perfAcc / perfN;
     perfAcc = 0;
     perfN = 0;
+    perfAvgMs = avg;
     if (avg > 22 && qualityMode === 'auto' && qLevel < QUALITY_LEVELS.length - 1) {
       setQuality(qLevel + 1);
       perfCool = 1.1;
@@ -3571,25 +3668,38 @@
     }
   }
 
+  var frameErrAt = -9999;
   function frame(ts) {
-    if (!last) last = ts;
-    var real = (ts - last) / 1000;
-    last = ts;
-    if (real > 0.25) real = 0.25;      /* sekme arkada kalınca sıçrama olmasın */
+    try {
+      if (!last) last = ts;
+      var real = (ts - last) / 1000;
+      last = ts;
+      if (real > 0.25) real = 0.25;      /* sekme arkada kalınca sıçrama olmasın */
 
-    perfSample(real * 1000);
+      perfSample(real * 1000);
 
-    acc += real;
-    var steps = 0;
-    while (acc >= STEP && steps < 6) {
-      update(STEP);
-      acc -= STEP;
-      steps++;
+      acc += real;
+      var steps = 0;
+      while (acc >= STEP && steps < 6) {
+        update(STEP);
+        acc -= STEP;
+        steps++;
+      }
+      if (acc > STEP * 4) acc = 0;       /* aşırı birikimi at */
+
+      draw();
+    } catch (err) {
+      /* Tek karelik bir hata oyunu kilitlemesin: döngü her hâlükârda devam eder */
+      acc = 0;
+      if (ts - frameErrAt > 1000) {
+        frameErrAt = ts;
+        if (window.console && console.error) {
+          console.error('[whirlybird] kare hatası (oyun devam ediyor):', err);
+        }
+      }
+    } finally {
+      requestAnimationFrame(frame);
     }
-    if (acc > STEP * 4) acc = 0;       /* aşırı birikimi at */
-
-    draw();
-    requestAnimationFrame(frame);
   }
 
   document.addEventListener('visibilitychange', function () {
@@ -3708,6 +3818,8 @@
   });
 
   function toggleSound() {
+    /* ?sessiz=1 / ?mute=1: test sekmesi asla ses açamaz, tercih değiştirmez */
+    if (FORCE_MUTE) return;
     soundOn = !soundOn;
     try { store('wb_sound', soundOn ? '1' : '0'); } catch (e) { }
     $('btn-sound').textContent = soundOn ? '🔊' : '🔇';
@@ -4100,6 +4212,8 @@
     setQuality: setQuality,
     getQuality: function () { return qLevel; },
     getDPR: function () { return DPR; },
+    getFps: function () { return perfAvgMs > 0 ? Math.round(1000 / perfAvgMs) : 0; },
+    getFrameMs: function () { return Math.round(perfAvgMs * 10) / 10; },
     isTouch: isTouch,
     getCoins: function () { return coins; },
     addCoins: function (n) { coins = Math.max(0, coins + n); saveProgress(); updateWalletUI(); return coins; },
@@ -4119,7 +4233,12 @@
     runCoins: runCoins,
     spawnBoss: function () { G.bossTriggered = false; startBoss(); },
     getBoss: function () {
-      return G.boss ? { state: G.boss.state, hp: G.boss.hp, maxHp: G.boss.maxHp, x: G.boss.x, sy: G.boss.sy } : null;
+      return G.boss ? {
+        state: G.boss.state, hp: G.boss.hp, maxHp: G.boss.maxHp, x: G.boss.x, sy: G.boss.sy,
+        name: G.boss.type ? G.boss.type.name : '',
+        form: G.boss.type ? G.boss.type.form : '',
+        pattern: G.boss.type ? G.boss.type.pattern : ''
+      } : null;
     },
     getBossShots: function () { return G.bossShots.length; },
     getBossCore: function () { return G.bossCore ? { x: G.bossCore.x, y: G.bossCore.y } : null; },
