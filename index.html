@@ -29,6 +29,9 @@
         <span class="pw pw-double hidden" id="pw-double">✨<b id="pw-double-t">10</b></span>
         <span class="pw pw-freeze hidden" id="pw-freeze">❄<b id="pw-freeze-t">5</b></span>
         <span class="pw pw-feather hidden" id="pw-feather">🪶</span>
+        <span class="pw pw-lowgrav hidden" id="pw-lowgrav">🪁<b id="pw-lowgrav-t">7</b></span>
+        <span class="pw pw-armor hidden" id="pw-armor">🧿<b id="pw-armor-t">5</b></span>
+        <span class="pw pw-slow hidden" id="pw-slow">⏳<b id="pw-slow-t">6</b></span>
       </div>
     </div>
     <div class="hud-right">
@@ -42,7 +45,7 @@
 
     <div class="hp-wrap" id="hp-wrap">
       <span class="hp-label">CAN</span>
-      <div class="hp-pips" id="hud-hp"><i></i><i></i><i></i></div>
+      <div class="hp-pips" id="hud-hp"><i></i><i></i><i></i><i></i><i></i></div>
     </div>
 
     <div class="boss-bar hidden" id="boss-bar">
@@ -198,6 +201,16 @@
       <button class="set-row" id="set-shake" type="button" aria-pressed="true">
         <span>EKRAN SARSINTISI</span><span class="switch on" id="sw-shake"></span>
       </button>
+      <button class="set-row" id="set-haptics" type="button" aria-pressed="false">
+        <span>TİTREŞİM</span><span class="switch" id="sw-haptics"></span>
+      </button>
+      <button class="set-row" id="set-motion" type="button" aria-pressed="false">
+        <span>HAREKETİ AZALT</span><span class="switch" id="sw-motion"></span>
+      </button>
+      <button class="set-row" id="set-contrast" type="button" aria-pressed="false">
+        <span>YÜKSEK KONTRAST</span><span class="switch" id="sw-contrast"></span>
+      </button>
+      <p class="set-note">Titreşim yalnızca dokunmatik cihazlarda çalışır. Hareketi azalt seçeneği sarsıntı, flaş ve arka plan efektlerini kapatır.</p>
 
       <div class="set-group">
         <div class="set-label">GRAFİK KALİTESİ</div>
@@ -221,6 +234,7 @@
   </section>
 
   <div class="toast" id="toast"></div>
+  <div class="sr-only" id="aria-live" role="status" aria-live="polite" aria-atomic="true"></div>
 
   <div class="vignette"></div>
   <div class="hint-touch" id="hint-touch">Sol yarı ← &nbsp;·&nbsp; → sağ yarı</div>

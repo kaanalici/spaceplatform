@@ -16,6 +16,9 @@
   var MAX_VX = 440;
   var START_CAM = -H * 0.55;
   var APEX = (JUMP * JUMP) / (2 * GRAV);
+  var PLATFORM_EDGE_GRACE = 8;   /* inişte kenardan 8 px affet */
+  var AIR_TURN_BOOST = 1.14;     /* havada yön değiştirme desteği */
+  var STAR_PICKUP_BONUS = 3;     /* yıldız toplama yarıçapı */
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d', { alpha: false });
@@ -264,6 +267,10 @@
     else if (kind === 'double') { tone(620, 0.1, 'square', 0.04); tone(930, 0.1, 'square', 0.035, 1240); tone(1240, 0.2, 'triangle', 0.035, 1860); }
     else if (kind === 'freeze') { tone(1400, 0.26, 'sine', 0.045, 420); tone(900, 0.3, 'triangle', 0.03, 260); }
     else if (kind === 'feather') { tone(700, 0.12, 'sine', 0.045); tone(1050, 0.2, 'sine', 0.04, 1400); }
+    else if (kind === 'heal') { tone(520, 0.1, 'sine', 0.05, 660); tone(780, 0.18, 'triangle', 0.038, 1040); tone(1040, 0.22, 'sine', 0.028, 1320); }
+    else if (kind === 'lowgrav') { tone(240, 0.22, 'sine', 0.05, 520); tone(480, 0.3, 'triangle', 0.035, 900); }
+    else if (kind === 'armor') { tone(320, 0.16, 'square', 0.05, 640); tone(960, 0.24, 'triangle', 0.04, 1280); tone(480, 0.3, 'sine', 0.03, 240); }
+    else if (kind === 'slow') { tone(760, 0.3, 'sine', 0.045, 180); tone(380, 0.36, 'triangle', 0.032, 120); }
     else if (kind === 'revive') { tone(260, 0.18, 'sawtooth', 0.05, 520); tone(620, 0.16, 'triangle', 0.05); tone(1240, 0.3, 'sine', 0.045, 1560); }
     else if (kind === 'ui') { tone(720, 0.06, 'triangle', 0.03, 880); }
     else if (kind === 'crate') { tone(180, 0.12, 'square', 0.04, 260); tone(260, 0.12, 'square', 0.035, 200); }
@@ -297,6 +304,168 @@
   }
 
   /* =========================================================
+     MÜZİK — prosedürel, katmanlı (menü / oyun / boss)
+     WebAudio ile gerçek zamanlı üretilir; dosya indirmez.
+     ========================================================= */
+
+  var MUSIC_TRACKS = {
+    menu: {
+      bpm: 84, roots: [45, 41, 48, 43], chord: [0, 3, 7, 10], arp: [12, 15, 19, 24],
+      bass: 0.048, arpV: 0.020, pad: 0.013, hat: 0, kick: 0
+    },
+    play: {
+      bpm: 112, roots: [45, 41, 43, 40], chord: [0, 3, 7, 10], arp: [12, 15, 19, 24],
+      bass: 0.058, arpV: 0.024, pad: 0.012, hat: 0.010, kick: 0.045
+    },
+    boss: {
+      bpm: 138, roots: [38, 34, 41, 45], chord: [0, 3, 7, 10], arp: [12, 15, 18, 22],
+      bass: 0.072, arpV: 0.028, pad: 0.016, hat: 0.014, kick: 0.058
+    }
+  };
+
+  var music = { gain: null, timer: null, mode: 'menu', step: 0, next: 0 };
+  var noiseBuf = null;
+
+  function mfreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+
+  function musicBus(ac) {
+    if (!music.gain || music.gain.context !== ac) {
+      try {
+        music.gain = ac.createGain();
+        music.gain.gain.value = 0.0001;
+        music.gain.connect(ac.destination);
+      } catch (e) { return ac.destination; }
+    }
+    return music.gain;
+  }
+
+  function mnote(ac, freq, t, dur, type, vol) {
+    if (!freq || freq < 30 || freq > 9000) return;
+    var o = ac.createOscillator();
+    var g = ac.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(musicBus(ac));
+    o.start(t);
+    o.stop(t + dur + 0.04);
+  }
+
+  function mhat(ac, t, vol) {
+    if (!noiseBuf || noiseBuf.sampleRate !== ac.sampleRate) {
+      noiseBuf = ac.createBuffer(1, Math.floor(ac.sampleRate * 0.4), ac.sampleRate);
+      var d = noiseBuf.getChannelData(0);
+      for (var i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    }
+    var src = ac.createBufferSource();
+    src.buffer = noiseBuf;
+    var f = ac.createBiquadFilter();
+    f.type = 'highpass';
+    f.frequency.value = 7200;
+    var g = ac.createGain();
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.06);
+    src.connect(f).connect(g).connect(musicBus(ac));
+    src.start(t);
+    src.stop(t + 0.08);
+  }
+
+  function mkick(ac, t, vol) {
+    var o = ac.createOscillator();
+    var g = ac.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(150, t);
+    o.frequency.exponentialRampToValueAtTime(44, t + 0.16);
+    g.gain.setValueAtTime(vol, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+    o.connect(g).connect(musicBus(ac));
+    o.start(t);
+    o.stop(t + 0.22);
+  }
+
+  function musicStep(ac, t, tr, step, level) {
+    var bar = Math.floor(step / 8);
+    var s = step % 8;
+    var root = tr.roots[bar % tr.roots.length];
+
+    /* akor yastığı */
+    if (s === 0) {
+      for (var c = 0; c < tr.chord.length; c++) {
+        mnote(ac, mfreq(root + 12 + tr.chord[c]), t, 1.9, 'sine', tr.pad);
+      }
+      if (level >= 1) mnote(ac, mfreq(root + 24), t, 1.2, 'triangle', tr.pad * 0.5);
+    }
+
+    /* bas */
+    if (s === 0 || s === 3 || s === 6) {
+      mnote(ac, mfreq(root - 12 + (s === 6 ? 7 : 0)), t, s === 0 ? 0.34 : 0.22, 'sawtooth', tr.bass);
+    }
+
+    /* arpej */
+    var pick = tr.arp[(step + bar) % tr.arp.length];
+    if (s % 2 === 0 || level >= 2) {
+      mnote(ac, mfreq(root + pick), t, 0.17, 'triangle', tr.arpV);
+      if (level >= 2) mnote(ac, mfreq(root + pick + 12), t + 0.02, 0.1, 'sine', tr.arpV * 0.42);
+    }
+
+    if (tr.hat > 0 && s % 2 === 1) mhat(ac, t, tr.hat);
+    if (tr.kick > 0 && (s === 0 || s === 4 || (level >= 2 && s === 6))) mkick(ac, t, tr.kick);
+  }
+
+  function musicTick() {
+    if (FORCE_MUTE || !soundOn) return;
+    var ac = audio();
+    if (!ac) return;
+    var g = musicBus(ac);
+    if (!g.gain) return;
+    var paused = document.hidden || G.mode === 'paused';
+    var target = paused ? 0.16 : G.mode === 'over' ? 0.22
+      : (music.mode === 'boss' ? 0.6 : 0.52);
+    try { g.gain.setTargetAtTime(target, ac.currentTime, 0.22); } catch (e) { }
+    if (paused) {
+      music.next = Math.max(music.next, ac.currentTime + 0.12);
+      return;
+    }
+    var tr = MUSIC_TRACKS[music.mode] || MUSIC_TRACKS.menu;
+    var spb = 60 / tr.bpm / 2;
+    if (music.next < ac.currentTime - 0.5) music.next = ac.currentTime + 0.05;
+    var level = music.mode === 'boss' ? 2 : (G.meters > 1400 ? 2 : G.meters > 600 ? 1 : 0);
+    var guard = 0;
+    while (music.next < ac.currentTime + 0.3 && guard++ < 8) {
+      musicStep(ac, music.next, tr, music.step, level);
+      music.next += spb;
+      music.step++;
+    }
+  }
+
+  function startMusic() {
+    if (FORCE_MUTE || !soundOn) return;
+    var ac = audio();
+    if (!ac) return;
+    if (!music.next) music.next = ac.currentTime + 0.08;
+    if (music.timer) return;
+    music.timer = setInterval(musicTick, 130);
+  }
+
+  function stopMusic() {
+    if (music.timer) { clearInterval(music.timer); music.timer = null; }
+    music.next = 0;
+    if (music.gain) {
+      try { music.gain.gain.setTargetAtTime(0.0001, music.gain.context.currentTime, 0.08); } catch (e) { }
+    }
+  }
+
+  function setMusicMode(mode) {
+    if (!MUSIC_TRACKS[mode] || music.mode === mode) return;
+    music.mode = mode;
+    music.step = 0;
+    var ac = audio();
+    if (ac) music.next = ac.currentTime + 0.08;
+  }
+
+  /* =========================================================
      KOZMETİK KATALOĞU / CÜZDAN / SANDIK
      ========================================================= */
 
@@ -311,7 +480,7 @@
   /* telefonda aynı anda ekranda daha az mermi tutulur: fill-rate ve
      çarpışma maliyeti düşer, oynanış hissi aynı kalır */
   var BOSS_SHOT_MAX = isTouch ? 14 : 20;
-  var PLAYER_HP = 3;           /* boss mermilerine karşı oyuncu canı */
+  var PLAYER_HP = 5;           /* testere ve boss mermilerine karşı oyuncu canı */
 
   /* 20 farklı boss türü — her koşuda biri rastgele seçilir.
      form: eye | ring | crystal | crown | void
@@ -434,6 +603,39 @@
   var equippedTrail = BY_ID['iz-neon'];
   var qualityMode = 'auto';
   var shakeOn = true;
+
+  /* erişilebilirlik / his */
+  var motionQuery = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : null;
+  var reducedMotion = store('wb_motion') === null
+    ? !!(motionQuery && motionQuery.matches)
+    : store('wb_motion') === '1';
+  var highContrast = store('wb_contrast') === '1';
+  var hapticsOn = store('wb_haptics') === null ? isTouch : store('wb_haptics') === '1';
+
+  function buzz(pattern) {
+    /* sessiz test modunda titreşim de yok */
+    if (FORCE_MUTE || !hapticsOn || document.hidden) return;
+    if (!navigator.vibrate) return;
+    try { navigator.vibrate(pattern); } catch (e) { }
+  }
+
+  /* ekran okuyucu bildirimi */
+  var liveTimer = null;
+  function announce(text) {
+    var el = document.getElementById('aria-live');
+    if (!el) return;
+    el.textContent = '';
+    if (liveTimer) clearTimeout(liveTimer);
+    liveTimer = setTimeout(function () { el.textContent = text; }, 60);
+  }
+
+  if (motionQuery) {
+    var onMotionChange = function (e) {
+      if (store('wb_motion') === null) reducedMotion = !!e.matches;
+    };
+    if (motionQuery.addEventListener) motionQuery.addEventListener('change', onMotionChange);
+    else if (motionQuery.addListener) motionQuery.addListener(onMotionChange);
+  }
   var crateOpening = false;
   var rewardItem = null;
   var cosTab = 'skin';
@@ -526,6 +728,9 @@
     double: 0,
     freeze: 0,
     feather: 0,
+    lowGrav: 0,
+    armor: 0,
+    slow: 0,
     hp: PLAYER_HP,
     maxHp: PLAYER_HP,
     bonus: 0,
@@ -543,7 +748,9 @@
     best: parseInt(store('wb_best') || '0', 10) || 0,
     bird: { x: W / 2, y: 0, vx: 0, vy: 0, r: 17, face: 1, tilt: 0, squash: 0, rotor: 0 },
     trailTimer: 0,
-    overAt: 0
+    overAt: 0,
+    resumeT: 0,
+    autoPaused: false
   };
 
   /* kontrol stili: 'pc' (klavye/fare) veya 'touch' (ekranın yarısına bas) */
@@ -669,6 +876,9 @@
     G.double = 0;
     G.freeze = 0;
     G.feather = 0;
+    G.lowGrav = 0;
+    G.armor = 0;
+    G.slow = 0;
     G.hp = PLAYER_HP;
     G.maxHp = PLAYER_HP;
     G.bonus = 0;
@@ -684,6 +894,8 @@
     G.flash = 0;
     G.mile = 0;
     G.trailTimer = 0;
+    G.resumeT = 0;
+    G.autoPaused = false;
     G.pointer.active = false;
     G.pointer.x = null;
     G.touch.active = false;
@@ -739,13 +951,17 @@
     /* platformda duran eşyalar */
     if (type === 'normal' && !pl.spring && dist > 260 && Math.random() < 0.15) {
       var roll = Math.random();
-      pl.item = roll < 0.22 ? 'shield'
-        : roll < 0.44 ? 'magnet'
-          : roll < 0.61 ? 'jet'
-            : roll < 0.77 ? 'crystal'
-              : roll < 0.89 ? 'double'
-                : roll < 0.96 ? 'freeze'
-                  : 'feather';
+      pl.item = roll < 0.13 ? 'heart'
+        : roll < 0.25 ? 'shield'
+          : roll < 0.37 ? 'magnet'
+            : roll < 0.49 ? 'jet'
+              : roll < 0.59 ? 'crystal'
+                : roll < 0.69 ? 'double'
+                  : roll < 0.77 ? 'freeze'
+                    : roll < 0.84 ? 'feather'
+                      : roll < 0.90 ? 'lowgrav'
+                        : roll < 0.95 ? 'armor'
+                          : 'slow';
     }
 
     if (!pl.item && dist > 120 && Math.random() < 0.26) pl.star = true;
@@ -767,7 +983,8 @@
     }
 
     /* testereler de yumuşak şekilde devreye girer */
-    var pTrap = 0.34 * smoothstep(0.18, 0.95, d);
+    /* testereler daha seyrek: aynı anda ekranda daha az tehlike */
+    var pTrap = 0.18 * smoothstep(0.20, 0.95, d);
     if (Math.random() < pTrap) {
       var tx = rand(50, W - 50);
       G.traps.push({
@@ -784,6 +1001,8 @@
     closeSheets();
     reset();
     setMode('play');
+    setMusicMode('play');
+    startMusic();
     sfx('start');
     updateHud(true);
     if (inputMode === 'touch') {
@@ -796,6 +1015,7 @@
     closeSheets();
     reset();
     setMode('menu');
+    setMusicMode('menu');
     $('menu-best').textContent = G.best;
     updateWalletUI();
   }
@@ -843,6 +1063,12 @@
   }
 
   function setMode(mode) {
+    var prev = G.mode;
+    if (mode === 'play' && prev === 'paused' && G.autoPaused) {
+      /* arka plandan dönüşte haksız ölüm olmasın: 3-2-1 */
+      G.resumeT = 2.4;
+      G.autoPaused = false;
+    }
     G.mode = mode;
     $('menu').classList.toggle('hidden', mode !== 'menu');
     $('over').classList.toggle('hidden', mode !== 'over');
@@ -908,6 +1134,7 @@
       burst(p.x, p.y, 18, '#bfefff', 1.2);
       floater(p.x, p.y - 20, '2. ŞANS!', '#ffffff');
       sfx('revive');
+      buzz([20, 30, 20]);
       G.shake = Math.max(G.shake, 10);
       G.flash = Math.max(G.flash, 0.34);
       G.hp = 1;
@@ -922,6 +1149,7 @@
     burst(p.x, p.y, 30, '#00e5ff', 1.5);
     burst(p.x, p.y, 14, '#ff2d95', 1.2);
     sfx('die');
+    buzz([60, 45, 120]);
 
     var isNew = G.score > G.best;
     if (isNew) {
@@ -942,10 +1170,18 @@
     G.time += dt;
     G.shake = Math.max(0, G.shake - dt * 34);
     G.flash = Math.max(0, G.flash - dt * 1.8);
+    if (reducedMotion) {
+      G.shake = 0;
+      G.flash = 0;
+    }
     updateParticles(dt);
 
     if (G.mode === 'play') {
-      updatePlay(dt);
+      if (G.resumeT > 0) {
+        G.resumeT = Math.max(0, G.resumeT - dt);
+      } else {
+        updatePlay(dt);
+      }
     } else if (G.mode === 'over') {
       updateOver(dt);
     } else if (G.mode === 'menu') {
@@ -1007,7 +1243,9 @@
     }
 
     if (ax !== 0) {
-      p.vx += ax * dt;
+      /* havada yön değiştirirken biraz daha çevik ol */
+      var turning = p.vx !== 0 && (ax > 0) !== (p.vx > 0);
+      p.vx += ax * dt * (turning ? AIR_TURN_BOOST : 1);
       p.face = ax > 0 ? 1 : -1;
     } else {
       p.vx *= Math.pow(0.0016, dt);
@@ -1026,6 +1264,9 @@
     if (G.magnet > 0) G.magnet = Math.max(0, G.magnet - dt);
     if (G.double > 0) G.double = Math.max(0, G.double - dt);
     if (G.freeze > 0) G.freeze = Math.max(0, G.freeze - dt);
+    if (G.lowGrav > 0) G.lowGrav = Math.max(0, G.lowGrav - dt);
+    if (G.armor > 0) G.armor = Math.max(0, G.armor - dt);
+    if (G.slow > 0) G.slow = Math.max(0, G.slow - dt);
 
     if (G.jet > 0) {
       /* jetpack: sabit hızlı yükseliş, alev izi */
@@ -1048,7 +1289,10 @@
         burst(p.x, p.y + 10, 14, '#ffb020', 1.1);
       }
     } else {
-      p.vy = Math.min(p.vy + GRAV * dt, 1650);
+      /* hafiflik: yerçekimi ve düşüş hızı azalır */
+      var gmul = G.lowGrav > 0 ? 0.62 : 1;
+      var vmax = G.lowGrav > 0 ? 1250 : 1650;
+      p.vy = Math.min(p.vy + GRAV * gmul * dt, vmax);
     }
     p.y += p.vy * dt;
 
@@ -1062,7 +1306,9 @@
       for (var i = 0; i < G.platforms.length; i++) {
         var pl = G.platforms[i];
         if (pl.dead) continue;
-        if (p.x + 9 < pl.x || p.x - 9 > pl.x + pl.w) continue;
+        /* kenar affı: görsel olarak az dışarıda olsan da iniş sayılır */
+        if (p.x + 9 + PLATFORM_EDGE_GRACE < pl.x ||
+            p.x - 9 - PLATFORM_EDGE_GRACE > pl.x + pl.w) continue;
         if (prevBottom <= pl.y + 2 && bottom >= pl.y) {
           bounce(pl);
           break;
@@ -1165,12 +1411,13 @@
       }
       if (st.sparkT > 0) st.sparkT -= dt;
 
-      if (sd < p.r + st.r + 6) {
+      if (sd < p.r + st.r + 6 + STAR_PICKUP_BONUS) {
         st.got = true;
         G.starsGot++;
         var x2 = G.double > 0;
         if (x2) G.bonus += 16;
         sfx('star');
+        buzz(6);
         burst(st.x, st.y, 12, x2 ? '#ffd166' : '#00e5ff', 1.1);
         floater(st.x, st.y - 6, x2 ? '+2 ★' : '+1 ★', x2 ? '#ffe6a3' : '#7df9ff');
         G.flash = Math.max(G.flash, 0.18);
@@ -1193,16 +1440,17 @@
     }
 
     var frozen = G.freeze > 0;
+    var worldSlow = G.slow > 0 ? 0.45 : 1;
     for (var t = 0; t < G.traps.length; t++) {
       var tr = G.traps[t];
       if (!frozen) {
-        tr.phase += dt * tr.speed;
+        tr.phase += dt * tr.speed * worldSlow;
         tr.x = tr.baseX + Math.sin(tr.phase) * tr.range;
         if (tr.x < 26) { tr.x = 26; tr.baseX = 26; tr.range = -tr.range; }
         if (tr.x > W - 26) { tr.x = W - 26; tr.baseX = tr.x; tr.range = -tr.range; }
-        tr.angle += dt * 7;
+        tr.angle += dt * 7 * worldSlow;
       }
-      if (G.jet > 0 || G.invuln > 0) continue;
+      if (G.jet > 0 || G.invuln > 0 || G.armor > 0) continue;
       var tdx = p.x - tr.x, tdy = p.y - tr.y;
       if (tdx * tdx + tdy * tdy < (p.r + tr.r * 0.82) * (p.r + tr.r * 0.82)) {
         if (G.shield) {
@@ -1219,8 +1467,12 @@
           sfx('shieldBreak');
           continue;
         }
-        die();
-        return;
+        /* testere artık tek atmaz: 1 can götürür ve geri savurur */
+        damagePlayer(1, tr.x, tr.y);
+        if (G.mode !== 'play') return;
+        p.vy = -JUMP * 0.66;
+        p.vx += (p.x < tr.x ? -1 : 1) * 130;
+        continue;
       }
     }
 
@@ -1251,6 +1503,23 @@
       burst(item.x, item.y, 18, '#00e5ff', 1.2);
       floater(item.x, item.y - 10, 'KALKAN', '#7df9ff');
       G.flash = Math.max(G.flash, 0.16);
+    } else if (item.type === 'heart') {
+      if (G.hp < G.maxHp) {
+        G.hp = Math.min(G.maxHp, G.hp + 1);
+        sfx('heal');
+        buzz(10);
+        burst(item.x, item.y, 20, '#ff5a8a', 1.2);
+        burst(item.x, item.y, 10, '#ffffff', 1.0);
+        floater(item.x, item.y - 10, '+1 CAN', '#ffb3c8');
+        G.flash = Math.max(G.flash, 0.14);
+        syncPlayerHud(true);
+      } else {
+        /* can doluysa boşa gitmesin */
+        G.bonus += 60;
+        sfx('heal');
+        burst(item.x, item.y, 14, '#ff5a8a', 1.0);
+        floater(item.x, item.y - 10, 'CAN DOLU +60', '#ffb3c8');
+      }
     } else if (item.type === 'magnet') {
       G.magnet = 8;
       sfx('magnet');
@@ -1292,6 +1561,25 @@
       burst(item.x, item.y, 22, '#ffffff', 1.3);
       floater(item.x, item.y - 10, '2. ŞANS', '#ffffff');
       G.flash = Math.max(G.flash, 0.16);
+    } else if (item.type === 'lowgrav') {
+      G.lowGrav = 7;
+      sfx('lowgrav');
+      burst(item.x, item.y, 20, '#7cffb2', 1.3);
+      floater(item.x, item.y - 10, 'HAFİFLİK 7s', '#b6ffd4');
+      G.flash = Math.max(G.flash, 0.16);
+    } else if (item.type === 'armor') {
+      G.armor = 5;
+      sfx('armor');
+      burst(item.x, item.y, 24, '#ff5ac8', 1.4);
+      burst(item.x, item.y, 10, '#ffffff', 1.0);
+      floater(item.x, item.y - 10, 'NEON ZIRH 5s', '#ffc2ec');
+      G.flash = Math.max(G.flash, 0.2);
+    } else if (item.type === 'slow') {
+      G.slow = 6;
+      sfx('slow');
+      burst(item.x, item.y, 22, '#968cff', 1.3);
+      floater(item.x, item.y - 10, 'ZAMAN BÜKÜMÜ 6s', '#c9c2ff');
+      G.flash = Math.max(G.flash, 0.16);
     }
     updatePowersHud();
   }
@@ -1322,6 +1610,7 @@
       burst(p.x, p.y + 14, 5, 'rgba(255,255,255,0.8)', 0.55);
     }
 
+    buzz(spring ? 12 : 8);
     G.shake = Math.max(G.shake, spring ? 5 : 1.7);
   }
 
@@ -1343,6 +1632,8 @@
       ? 'CAN DOLDU · +60 NEON'
       : '6 ÇEKİRDEK TOPLA · CANINI KORU';
     el.classList.add('show');
+    announce(win ? 'Boss yenildi. Can dolduruldu, 60 NEON kazanıldı.'
+      : (name || 'Gökyüzü Bekçisi') + ' geliyor. 6 çekirdek topla, canını koru.');
     clearTimeout(bossWarnTimer);
     bossWarnTimer = setTimeout(function () { el.classList.remove('show'); }, win ? 2800 : 2600);
   }
@@ -1383,6 +1674,7 @@
     G.shake = Math.max(G.shake, 14);
     G.flash = Math.max(G.flash, 0.22);
     sfx('bossWarn');
+    setMusicMode('boss');
 
     /* boss rengini HUD'a ve uyarı bandına taşı */
     document.body.style.setProperty('--bc1', ty.c1);
@@ -1572,6 +1864,7 @@
     burst(c.x, c.y, 18, b.type ? b.type.c1 : '#ff2d6e', 1.3);
     floater(c.x, c.y - 18, 'VURUŞ ' + (b.maxHp - b.hp) + '/' + b.maxHp, '#ffe6a3');
     sfx('bossHit');
+    buzz(20);
     syncBossHud();
     pulseBossBar();
 
@@ -1634,11 +1927,12 @@
 
   function updateBossShots(dt) {
     var p = G.bird;
+    var sdt = dt * (G.slow > 0 ? 0.45 : 1);
     for (var i = G.bossShots.length - 1; i >= 0; i--) {
       var s = G.bossShots[i];
-      s.x += s.vx * dt;
-      s.y += s.vy * dt;
-      s.angle += dt * 9;
+      s.x += s.vx * sdt;
+      s.y += s.vy * sdt;
+      s.angle += sdt * 9;
       s.life -= dt;
 
       if (s.life <= 0 || s.y > G.camY + H + 90 || s.x < -50 || s.x > W + 50) {
@@ -1653,7 +1947,7 @@
           color: rgba(s.color || '#ff2d6e', 0.55), grav: 0
         });
       }
-      if (G.jet > 0 || G.invuln > 0) continue;
+      if (G.jet > 0 || G.invuln > 0 || G.armor > 0) continue;
 
       var dx = p.x - s.x, dy = p.y - s.y;
       if (dx * dx + dy * dy < (p.r + s.r + 3) * (p.r + s.r + 3)) {
@@ -1677,6 +1971,7 @@
 
   function damagePlayer(amount, sx, sy) {
     if (G.mode !== 'play' || G.hp <= 0) return;
+    if (G.armor > 0) return;
 
     G.hp = Math.max(0, G.hp - amount);
     G.invuln = Math.max(G.invuln, 1.4);
@@ -1688,6 +1983,8 @@
     burst(sx || G.bird.x, sy || G.bird.y, 14, '#ffffff', 1.1);
     floater(G.bird.x, G.bird.y - 22, '−1 CAN', '#ff8aa8');
     sfx('playerHit');
+    buzz([18, 26, 18]);
+    announce('Hasar aldın. Kalan can: ' + G.hp);
     syncPlayerHud(true);
     pulsePlayerHp();
 
@@ -1712,6 +2009,8 @@
     G.hp = G.maxHp;
     syncPlayerHud(true);
     sfx('bossDie');
+    setMusicMode('play');
+    buzz([30, 40, 30, 40, 70]);
     showBossWarn(true);
     floater(W / 2, G.camY + 240, '+300 PUAN · +60 NEON', '#ffe6a3');
     floater(W / 2, G.camY + 300, 'CAN DOLDU', '#39ff88');
@@ -1745,7 +2044,8 @@
   var lastPowersKey = '';
   function updatePowersHud(force) {
     var key = (G.shield ? 1 : 0) + '|' + Math.ceil(G.magnet) + '|' + Math.ceil(G.jet * 10)
-      + '|' + Math.ceil(G.double) + '|' + Math.ceil(G.freeze) + '|' + (G.feather > 0 ? 1 : 0);
+      + '|' + Math.ceil(G.double) + '|' + Math.ceil(G.freeze) + '|' + (G.feather > 0 ? 1 : 0)
+      + '|' + Math.ceil(G.lowGrav) + '|' + Math.ceil(G.armor) + '|' + Math.ceil(G.slow);
     if (!force && key === lastPowersKey) return;
     lastPowersKey = key;
     $('pw-shield').classList.toggle('hidden', !G.shield);
@@ -1754,10 +2054,16 @@
     $('pw-double').classList.toggle('hidden', G.double <= 0);
     $('pw-freeze').classList.toggle('hidden', G.freeze <= 0);
     $('pw-feather').classList.toggle('hidden', G.feather <= 0);
+    $('pw-lowgrav').classList.toggle('hidden', G.lowGrav <= 0);
+    $('pw-armor').classList.toggle('hidden', G.armor <= 0);
+    $('pw-slow').classList.toggle('hidden', G.slow <= 0);
     $('pw-magnet-t').textContent = Math.ceil(G.magnet);
     $('pw-jet-t').textContent = (Math.ceil(G.jet * 10) / 10).toFixed(1);
     $('pw-double-t').textContent = Math.ceil(G.double);
     $('pw-freeze-t').textContent = Math.ceil(G.freeze);
+    $('pw-lowgrav-t').textContent = Math.ceil(G.lowGrav);
+    $('pw-armor-t').textContent = Math.ceil(G.armor);
+    $('pw-slow-t').textContent = Math.ceil(G.slow);
   }
 
   var lastHpKey = '';
@@ -1772,7 +2078,7 @@
     for (var i = 0; i < pips.length; i++) {
       pips[i].classList.toggle('lost', i >= G.hp);
     }
-    wrap.classList.toggle('low', G.hp <= 1);
+    wrap.classList.toggle('low', G.hp <= 2);
   }
 
   function pulsePlayerHp() {
@@ -1830,8 +2136,10 @@
     /* atmosfer katmanları */
     drawAurora(th);
     if (th.star > 0.02) drawBgStars(th.star);
-    drawMeteors(th);
-    drawParallaxShards(th);
+    if (!reducedMotion) {
+      drawMeteors(th);
+      drawParallaxShards(th);
+    }
 
     /* perspektif ızgara */
     drawNeonGrid(th);
@@ -1845,7 +2153,7 @@
       drawMenuScene(th);
     } else {
       ctx.save();
-      if (G.shake > 0.25 && shakeOn) {
+      if (G.shake > 0.25 && shakeOn && !reducedMotion) {
         ctx.translate(rand(-G.shake, G.shake), rand(-G.shake, G.shake));
       }
       ctx.translate(0, -G.camY);
@@ -1869,10 +2177,40 @@
       drawTouchZone(G.touch.side, th);
     }
 
+    if (G.resumeT > 0 && G.mode === 'play') drawResumeCountdown();
+
     if (G.flash > 0) {
       ctx.fillStyle = 'rgba(255,255,255,' + (G.flash * 0.55) + ')';
       ctx.fillRect(0, 0, W, H);
     }
+  }
+
+  function drawResumeCountdown() {
+    var n = Math.max(1, Math.ceil(G.resumeT / 0.8));
+    var pulse = 1 + 0.06 * Math.sin(G.time * 8);
+    ctx.save();
+    ctx.fillStyle = 'rgba(3,2,10,0.42)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(232,251,255,0.72)';
+    ctx.font = 'bold 13px "Trebuchet MS", sans-serif';
+    ctx.fillText('HAZIR OL', W / 2, H / 2 - 82);
+    ctx.save();
+    ctx.translate(W / 2, H / 2);
+    ctx.scale(pulse, pulse);
+    ctx.shadowColor = '#00e5ff';
+    ctx.shadowBlur = 34;
+    ctx.fillStyle = '#e8fbff';
+    ctx.font = 'bold 104px "Trebuchet MS", sans-serif';
+    ctx.fillText(String(n), 0, 0);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(0,229,255,0.55)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(W / 2, H / 2, 76, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   }
 
   function drawTouchZone(side, th) {
@@ -2371,6 +2709,17 @@
     ctx.fill();
     ctx.restore();
 
+    if (highContrast) {
+      ctx.save();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(x + 2, y + 1.4);
+      ctx.lineTo(x + w - 2, y + 1.4);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     if (type === 'moving') {
       ctx.save();
       ctx.fillStyle = accent;
@@ -2452,6 +2801,12 @@
       starPath(0, 0, st.r * 0.58, 4, 0.32);
       ctx.fill();
       glowOff();
+      if (highContrast) {
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        starPath(0, 0, st.r + 3, 4, 0.3);
+        ctx.stroke();
+      }
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
       ctx.arc(0, 0, 2.4, 0, Math.PI * 2);
@@ -2469,6 +2824,10 @@
     crystal: '169,107,255',
     double: '255,209,102',
     freeze: '159,232,255',
+    heart: '255,90,138',
+    lowgrav: '124,255,178',
+    armor: '255,90,200',
+    slow: '150,140,255',
     feather: '232,251,255'
   };
 
@@ -2506,6 +2865,10 @@
       else if (it.type === 'crystal') drawCrystalIcon();
       else if (it.type === 'double') drawDoubleIcon();
       else if (it.type === 'freeze') drawFreezeIcon();
+      else if (it.type === 'heart') drawHeartIcon();
+      else if (it.type === 'lowgrav') drawLowGravIcon();
+      else if (it.type === 'armor') drawArmorIcon();
+      else if (it.type === 'slow') drawSlowIcon();
       else drawFeatherIcon();
 
       ctx.restore();
@@ -2704,6 +3067,98 @@
     ctx.restore();
   }
 
+  /* can: parlak kalp */
+  function drawHeartIcon() {
+    ctx.beginPath();
+    ctx.moveTo(0, 11.5);
+    ctx.bezierCurveTo(-15, 1.5, -9.5, -12, 0, -4.5);
+    ctx.bezierCurveTo(9.5, -12, 15, 1.5, 0, 11.5);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    glowOff();
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.beginPath();
+    ctx.arc(-4.2, -4.6, 2.3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  /* hafiflik: yukarı ok demeti */
+  function drawLowGravIcon() {
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 2.6;
+    ctx.beginPath();
+    for (var k = -1; k <= 1; k++) {
+      var ox = k * 6;
+      ctx.moveTo(ox - 2.6, 3);
+      ctx.lineTo(ox, -9);
+      ctx.lineTo(ox + 2.6, 3);
+    }
+    ctx.stroke();
+    glowOff();
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    ctx.arc(0, 8, 2.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  /* neon zırh: çift altıgen kalkan */
+  function drawArmorIcon() {
+    function hex(r) {
+      ctx.beginPath();
+      for (var k = 0; k < 6; k++) {
+        var a = Math.PI / 6 + k * Math.PI / 3;
+        var px = Math.cos(a) * r;
+        var py = Math.sin(a) * r;
+        if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+    }
+    ctx.fillStyle = 'rgba(255,90,200,0.28)';
+    hex(12);
+    ctx.fill();
+    ctx.stroke();
+    glowOff();
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 1.3;
+    hex(7);
+    ctx.stroke();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(0, 0, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  /* zaman bükümü: kum saati + halka */
+  function drawSlowIcon() {
+    glowOff();
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(0, 0, 12.5, 0.6, Math.PI * 2 - 0.6);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-6, -10);
+    ctx.lineTo(6, -10);
+    ctx.lineTo(-6, 10);
+    ctx.lineTo(6, 10);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.beginPath();
+    ctx.moveTo(-4.4, -8);
+    ctx.lineTo(4.4, -8);
+    ctx.lineTo(0, -0.6);
+    ctx.closePath();
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-4.4, 8);
+    ctx.lineTo(4.4, 8);
+    ctx.lineTo(0, 1.2);
+    ctx.closePath();
+    ctx.fill();
+  }
+
   function drawTraps() {
     var frozen = G.freeze > 0;
     for (var i = 0; i < G.traps.length; i++) {
@@ -2861,8 +3316,8 @@
       }
       ctx.closePath();
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = highContrast ? '#ffffff' : 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = highContrast ? 2.2 : 1;
       ctx.stroke();
       glowOff();
 
@@ -2955,6 +3410,14 @@
     ctx.arc(0, 0, 3, 0, Math.PI * 2);
     ctx.fill();
     glowOff();
+
+    if (highContrast) {
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 24, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     ctx.restore();
 
     ctx.save();
@@ -3824,12 +4287,16 @@
     try { store('wb_sound', soundOn ? '1' : '0'); } catch (e) { }
     $('btn-sound').textContent = soundOn ? '🔊' : '🔇';
     if (document.getElementById('sw-sound')) syncSettings();
-    if (soundOn) sfx('jump');
+    if (soundOn) { startMusic(); sfx('jump'); }
+    else { stopMusic(); }
   }
   $('btn-sound').addEventListener('click', toggleSound);
 
   document.addEventListener('visibilitychange', function () {
-    if (document.hidden && G.mode === 'play') setMode('paused');
+    if (document.hidden && G.mode === 'play') {
+      G.autoPaused = true;
+      setMode('paused');
+    }
   });
 
   /* ---------------- arayüz: sandık / kozmetik / ayarlar ---------------- */
@@ -4065,6 +4532,17 @@
     $('set-sound').setAttribute('aria-pressed', soundOn ? 'true' : 'false');
     $('sw-shake').classList.toggle('on', shakeOn);
     $('set-shake').setAttribute('aria-pressed', shakeOn ? 'true' : 'false');
+    $('sw-haptics').classList.toggle('on', hapticsOn);
+    $('set-haptics').setAttribute('aria-pressed', hapticsOn ? 'true' : 'false');
+    $('sw-motion').classList.toggle('on', reducedMotion);
+    $('set-motion').setAttribute('aria-pressed', reducedMotion ? 'true' : 'false');
+    $('sw-contrast').classList.toggle('on', highContrast);
+    $('set-contrast').setAttribute('aria-pressed', highContrast ? 'true' : 'false');
+    var noHaptics = !navigator.vibrate;
+    $('set-haptics').classList.toggle('disabled', noHaptics);
+    $('set-haptics').setAttribute('aria-disabled', noHaptics ? 'true' : 'false');
+    document.body.classList.toggle('reduced-motion', reducedMotion);
+    document.body.classList.toggle('high-contrast', highContrast);
 
     var qb = document.querySelectorAll('#seg-quality button');
     for (var i = 0; i < qb.length; i++) {
@@ -4140,6 +4618,32 @@
     syncSettings();
     sfx('ui');
     toast('Ekran sarsıntısı: ' + (shakeOn ? 'açık' : 'kapalı'));
+  });
+
+  $('set-haptics').addEventListener('click', function () {
+    if (!navigator.vibrate) { toast('Bu cihaz titreşimi desteklemiyor'); return; }
+    hapticsOn = !hapticsOn;
+    store('wb_haptics', hapticsOn ? '1' : '0');
+    syncSettings();
+    sfx('ui');
+    toast('Titreşim: ' + (hapticsOn ? 'açık' : 'kapalı'));
+    if (hapticsOn) buzz(18);
+  });
+
+  $('set-motion').addEventListener('click', function () {
+    reducedMotion = !reducedMotion;
+    store('wb_motion', reducedMotion ? '1' : '0');
+    syncSettings();
+    sfx('ui');
+    toast('Hareketi azalt: ' + (reducedMotion ? 'açık' : 'kapalı'));
+  });
+
+  $('set-contrast').addEventListener('click', function () {
+    highContrast = !highContrast;
+    store('wb_contrast', highContrast ? '1' : '0');
+    syncSettings();
+    sfx('ui');
+    toast('Yüksek kontrast: ' + (highContrast ? 'açık' : 'kapalı'));
   });
 
   document.querySelectorAll('#seg-quality button').forEach(function (b) {
@@ -4245,6 +4749,8 @@
     spawnBossCore: spawnBossCore,
     getRunBonuses: function () { return { bossScore: G.bonus, bossCoins: G.bossCoins, bossTriggered: G.bossTriggered }; },
     getTheme: function () { return themeFor(G.mode === 'menu' ? Math.min(7000, G.best * 2) : G.meters); },
+    getMusic: function () { return { mode: music.mode, running: !!music.timer, step: music.step, gain: music.gain ? music.gain.gain.value : 0 }; },
+    getPowers: function () { return { lowGrav: G.lowGrav, armor: G.armor, slow: G.slow, shield: G.shield, magnet: G.magnet, jet: G.jet, double: G.double, freeze: G.freeze, feather: G.feather }; },
     bossAt: BOSS_AT
   };
 
@@ -4254,6 +4760,15 @@
   updateWalletUI();
   applyInputMode(inputMode, false);
   goMenu();
+
+  /* tarayıcı politikası: ses ancak ilk kullanıcı hareketinden sonra açılır */
+  function musicGesture() {
+    startMusic();
+    document.removeEventListener('pointerdown', musicGesture);
+    document.removeEventListener('keydown', musicGesture);
+  }
+  document.addEventListener('pointerdown', musicGesture);
+  document.addEventListener('keydown', musicGesture);
 
   // menü arka planı için dünya hazır
   G.camY = START_CAM;
